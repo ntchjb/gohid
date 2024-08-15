@@ -39,13 +39,17 @@ func NewDevice(device *gousb.Device, deviceInfo DeviceInfo) (DeviceAccessor, err
 		}
 	}()
 
+	if err := device.SetAutoDetach(true); err != nil {
+		return nil, fmt.Errorf("unable to set auto detach for device %v:%v: %w", deviceInfo.DeviceDesc.Vendor, deviceInfo.DeviceDesc.Product, err)
+	}
+
 	cfg, err = device.Config(deviceInfo.Target[0])
 	if err != nil {
 		return nil, fmt.Errorf("unable to get config #%d for device %v:%v: %w", deviceInfo.Target[0], deviceInfo.DeviceDesc.Vendor, deviceInfo.DeviceDesc.Product, err)
 	}
 	intf, err = cfg.Interface(deviceInfo.Target[1], deviceInfo.Target[2])
 	if err != nil {
-		return nil, fmt.Errorf("unable to get interface #%d:%d for config #%d of device %v:%v %w", deviceInfo.Target[1], deviceInfo.Target[2], deviceInfo.Target[0], deviceInfo.DeviceDesc.Vendor, deviceInfo.DeviceDesc.Product, err)
+		return nil, fmt.Errorf("unable to get interface #%d:%d for config #%d of device %v:%v: %w", deviceInfo.Target[1], deviceInfo.Target[2], deviceInfo.Target[0], deviceInfo.DeviceDesc.Vendor, deviceInfo.DeviceDesc.Product, err)
 	}
 
 	for _, endpoint := range deviceInfo.Endpoints {
@@ -322,7 +326,7 @@ func (d *deviceImpl) GetHIDDescriptor() (hid.HIDDescriptor, error) {
 		return desc, ErrUninitializedDevice
 	}
 
-	// Get partial data first to know the whole data size
+	// #1: Get partial data first to know the whole data size
 	data := make([]byte, hid.HID_DESCRIPTOR_LENGTH)
 
 	_, err := d.device.Control(
@@ -344,7 +348,7 @@ func (d *deviceImpl) GetHIDDescriptor() (hid.HIDDescriptor, error) {
 		return desc, nil
 	}
 
-	// Now get the whole descriptor data
+	// #2: Now get the whole descriptor data, if any
 	data = make([]byte, hid.HID_DESCRIPTOR_LENGTH+(desc.BNumDescriptors-1)*3)
 	_, err = d.device.Control(
 		uint8(SETUP_REQUEST_TYPE_STANDARD)|uint8(SETUP_RECIPIENT_INTERFACE)|uint8(SETUP_EP_DIR_IN),

@@ -34,7 +34,7 @@ func (d *deviceManagerImpl) Enumerate(vendorID uint16, productID uint16) (hid.De
 							device := hid.DeviceInfo{
 								DeviceDesc: *desc,
 								ConfigDesc: config,
-								Target:     [4]int{config.Number, inf.Number, setting.Number, setting.Alternate},
+								Target:     [3]int{config.Number, inf.Number, setting.Alternate},
 								Protocol:   hid.HIDProtocol(setting.Protocol),
 								Subclass:   hid.SubClass(setting.SubClass),
 							}

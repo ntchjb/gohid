@@ -2,7 +2,8 @@ package hid
 
 import (
 	"context"
-	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/gousb"
@@ -129,7 +130,7 @@ type DeviceInfo struct {
 	// 1: Interface number
 	// 2: Setting number
 	// 3: Setting Alternate number
-	Target [4]int
+	Target [3]int
 	// HID subclass
 	Subclass SubClass
 	// HID protocol
@@ -139,17 +140,37 @@ type DeviceInfo struct {
 }
 
 func (d DeviceInfo) String() string {
-	return fmt.Sprintf(
-		"[%v:%v] C%d I%d S(%d,%d) | spd: %v, max_ctrl_size: %d",
-		d.DeviceDesc.Vendor,
-		d.DeviceDesc.Product,
-		d.Target[0],
-		d.Target[1],
-		d.Target[2],
-		d.Target[3],
-		d.DeviceDesc.Speed,
-		d.DeviceDesc.MaxControlPacketSize,
-	)
+	var builder strings.Builder
+	builder.WriteRune('[')
+	builder.WriteString(d.DeviceDesc.Vendor.String())
+	builder.WriteRune(':')
+	builder.WriteString(d.DeviceDesc.Product.String())
+	builder.WriteString("] Conf #")
+	builder.WriteString(strconv.Itoa(d.Target[0]))
+	builder.WriteString(" Intf #")
+	builder.WriteString(strconv.Itoa(d.Target[1]))
+	builder.WriteString(" Sett #")
+	builder.WriteString(strconv.Itoa(d.Target[2]))
+	builder.WriteString(" Speed: ")
+	builder.WriteString(d.DeviceDesc.Speed.String())
+	builder.WriteString(", CtrlSize: ")
+	builder.WriteString(strconv.Itoa(d.DeviceDesc.MaxControlPacketSize))
+
+	builder.WriteString(", Ep:[")
+	for i, endpoint := range d.Endpoints {
+		if i > 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString("#" + strconv.Itoa(endpoint.Number))
+		if endpoint.Direction {
+			builder.WriteString("(IN)")
+		} else {
+			builder.WriteString("(OUT)")
+		}
+	}
+	builder.WriteRune(']')
+
+	return builder.String()
 }
 
 type DeviceInfos []DeviceInfo
