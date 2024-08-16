@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/ntchjb/gohid/manager"
@@ -24,22 +23,18 @@ func main() {
 
 	fmt.Printf("deviceInfo: %v\n", deviceInfos)
 
-	deviceIdx := -1
-	for i, deviceInfo := range deviceInfos {
-		if deviceInfo.DeviceDesc.Vendor == 0x2C97 && deviceInfo.DeviceDesc.Product == 0x1015 && deviceInfo.Target[1] == 0 {
-			deviceIdx = i
-			break
-		}
-	}
-	if deviceIdx < 0 {
-		panic(errors.New("Ledger Nano S not found"))
-	}
-	device, err := man.Open(deviceInfos[deviceIdx])
+	// Open Ledger Nano S
+	device, err := man.Open(0x2C97, 0x1015)
 	if err != nil {
 		panic(err)
 	}
 	defer device.Close()
 
+	if err := device.SetTarget(1, 0, 0); err != nil {
+		panic(err)
+	}
+
+	// Get report descriptor
 	desc, err := device.GetReportDescriptor()
 	if err != nil {
 		panic(err)

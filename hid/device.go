@@ -15,63 +15,19 @@ var (
 	ErrEmptyData             = errors.New("empty data")
 	ErrUninitializedDevice   = errors.New("uninitialized device")
 	ErrUninitializedEndpoint = errors.New("uninitialized endpoint")
+	ErrDeviceIsNil           = errors.New("device is nil")
 )
 
-func NewDevice(device *gousb.Device, deviceInfo DeviceInfo) (DeviceAccessor, error) {
-	var err error
-	var cfg *gousb.Config
-	var intf *gousb.Interface
-	var epIn *gousb.InEndpoint
-	var epOut *gousb.OutEndpoint
-
-	defer func() {
-		// All opened connections should be closed if error occurred
-		if err != nil {
-			if intf != nil {
-				intf.Close()
-			}
-			if cfg != nil {
-				cfg.Close()
-			}
-			if device != nil {
-				device.Close()
-			}
-		}
-	}()
-
+func NewDevice(device *gousb.Device) (Device, error) {
+	if device == nil {
+		return nil, ErrDeviceIsNil
+	}
 	if err := device.SetAutoDetach(true); err != nil {
-		return nil, fmt.Errorf("unable to set auto detach for device %v:%v: %w", deviceInfo.DeviceDesc.Vendor, deviceInfo.DeviceDesc.Product, err)
-	}
-
-	cfg, err = device.Config(deviceInfo.Target[0])
-	if err != nil {
-		return nil, fmt.Errorf("unable to get config #%d for device %v:%v: %w", deviceInfo.Target[0], deviceInfo.DeviceDesc.Vendor, deviceInfo.DeviceDesc.Product, err)
-	}
-	intf, err = cfg.Interface(deviceInfo.Target[1], deviceInfo.Target[2])
-	if err != nil {
-		return nil, fmt.Errorf("unable to get interface #%d:%d for config #%d of device %v:%v: %w", deviceInfo.Target[1], deviceInfo.Target[2], deviceInfo.Target[0], deviceInfo.DeviceDesc.Vendor, deviceInfo.DeviceDesc.Product, err)
-	}
-
-	for _, endpoint := range deviceInfo.Endpoints {
-		if endpoint.Direction == bool(gousb.EndpointDirectionIn) && epIn == nil {
-			epIn, err = intf.InEndpoint(endpoint.Number)
-			if err != nil {
-				return nil, fmt.Errorf("unable to get IN endpoint at #%d for device %04x:%04x: %w", endpoint.Number, deviceInfo.DeviceDesc.Vendor, deviceInfo.DeviceDesc.Product, err)
-			}
-		} else if endpoint.Direction == bool(gousb.EndpointDirectionOut) && epOut == nil {
-			epOut, err = intf.OutEndpoint(endpoint.Number)
-			if err != nil {
-				return nil, fmt.Errorf("unable to get OUT endpoint at #%d for device %04x:%04x: %w", endpoint.Number, deviceInfo.DeviceDesc.Vendor, deviceInfo.DeviceDesc.Product, err)
-			}
-		}
+		return nil, fmt.Errorf("unable to set auto detach for device %v:%v: %w", device.Desc.Vendor, device.Desc.Product, err)
 	}
 
 	return &deviceImpl{
 		device: device,
-		config: cfg,
-		intf:   intf,
-		epIn:   epIn,
-		epOut:  epOut,
 	}, nil
 }
 
@@ -85,6 +41,76 @@ type deviceImpl struct {
 	deviceInfo DeviceInfo
 }
 
+func (d *deviceImpl) SetTarget(confNumber, infNumber, altNumber int) error {
+	var err error
+	var deviceInfo DeviceInfo
+	var cfg *gousb.Config
+	var intf *gousb.Interface
+	var epIn *gousb.InEndpoint
+	var epOut *gousb.OutEndpoint
+
+	if d.device == nil {
+		return ErrDeviceIsNil
+	}
+
+	defer func() {
+		// All opened connections should be closed if error occurred
+		if err != nil {
+			if intf != nil {
+				intf.Close()
+			}
+			if cfg != nil {
+				cfg.Close()
+			}
+		}
+	}()
+	if err := deviceInfo.FromDeviceDesc(d.device.Desc, confNumber, infNumber, altNumber); err != nil {
+		return fmt.Errorf("unable to gain device info from device: %w", err)
+	}
+
+	if d.intf != nil {
+		d.intf.Close()
+		d.intf = nil
+	}
+	if d.config != nil {
+		d.config.Close()
+		d.config = nil
+	}
+	d.epIn = nil
+	d.epOut = nil
+
+	cfg, err = d.device.Config(confNumber)
+	if err != nil {
+		return fmt.Errorf("unable to get config #%d for device %v:%v: %w", confNumber, d.device.Desc.Vendor, d.device.Desc.Product, err)
+	}
+	intf, err = cfg.Interface(infNumber, altNumber)
+	if err != nil {
+		return fmt.Errorf("unable to get interface #%d:%d for config #%d of device %v:%v: %w", infNumber, altNumber, confNumber, d.device.Desc.Vendor, d.device.Desc.Product, err)
+	}
+	endpoints := deviceInfo.GetEndpoints()
+	for _, endpoint := range endpoints {
+		if endpoint.Direction == gousb.EndpointDirectionIn && epIn == nil {
+			epIn, err = intf.InEndpoint(endpoint.Number)
+			if err != nil {
+				return fmt.Errorf("unable to get IN endpoint at #%d for device %04x:%04x: %w", endpoint.Number, d.device.Desc.Vendor, d.device.Desc.Product, err)
+			}
+		} else if endpoint.Direction == gousb.EndpointDirectionOut && epOut == nil {
+			epOut, err = intf.OutEndpoint(endpoint.Number)
+			if err != nil {
+				return fmt.Errorf("unable to get OUT endpoint at #%d for device %04x:%04x: %w", endpoint.Number, d.device.Desc.Vendor, d.device.Desc.Product, err)
+			}
+		}
+	}
+
+	d.config = cfg
+	d.intf = intf
+	d.epIn = epIn
+	d.epOut = epOut
+	d.deviceInfo = deviceInfo
+
+	return nil
+}
+
 func (d *deviceImpl) Close() error {
 	if d.intf != nil {
 		d.intf.Close()
@@ -92,7 +118,7 @@ func (d *deviceImpl) Close() error {
 
 	if d.config != nil {
 		if err := d.config.Close(); err != nil {
-			return fmt.Errorf("unable to close selected device configuration #%d at %04x:%04x: %w", d.deviceInfo.Target[0], d.device.Desc.Vendor, d.device.Desc.Product, err)
+			return fmt.Errorf("unable to close selected device configuration #%d at %04x:%04x: %w", d.deviceInfo.GetConfigNumber(), d.device.Desc.Vendor, d.device.Desc.Product, err)
 		}
 	}
 	if d.device != nil {
@@ -165,7 +191,7 @@ func (d *deviceImpl) SendFeatureReport(data []byte) (int, error) {
 		uint8(SETUP_REQUEST_TYPE_CLASS)|uint8(SETUP_RECIPIENT_INTERFACE)|uint8(SETUP_EP_DIR_OUT),
 		uint8(SETUP_REQUEST_HID_SET_REPORT),
 		(uint16(REPORT_TYPE_FEATURE)<<8)|uint16(reportNumber),
-		uint16(d.deviceInfo.Target[1]),
+		uint16(d.deviceInfo.GetInterfaceNumber()),
 		data,
 	)
 
@@ -199,7 +225,7 @@ func (d *deviceImpl) GetFeatureReport(data []byte) (int, error) {
 		uint8(SETUP_REQUEST_TYPE_CLASS)|uint8(SETUP_RECIPIENT_INTERFACE)|uint8(SETUP_EP_DIR_IN),
 		uint8(SETUP_REQUEST_HID_GET_REPORT),
 		(uint16(REPORT_TYPE_FEATURE)<<8)|uint16(reportNumber),
-		uint16(d.deviceInfo.Target[1]),
+		uint16(d.deviceInfo.GetInterfaceNumber()),
 		data,
 	)
 
@@ -233,7 +259,7 @@ func (d *deviceImpl) SendOutputReport(data []byte) (int, error) {
 		uint8(SETUP_REQUEST_TYPE_CLASS)|uint8(SETUP_RECIPIENT_INTERFACE)|uint8(SETUP_EP_DIR_OUT),
 		uint8(SETUP_REQUEST_HID_SET_REPORT),
 		(uint16(REPORT_TYPE_OUTPUT)<<8)|uint16(reportNumber),
-		uint16(d.deviceInfo.Target[1]),
+		uint16(d.deviceInfo.GetInterfaceNumber()),
 		data,
 	)
 
@@ -267,7 +293,7 @@ func (d *deviceImpl) GetInputReport(data []byte) (int, error) {
 		uint8(SETUP_REQUEST_TYPE_CLASS)|uint8(SETUP_RECIPIENT_INTERFACE)|uint8(SETUP_EP_DIR_IN),
 		uint8(SETUP_REQUEST_HID_GET_REPORT),
 		(uint16(REPORT_TYPE_INPUT)<<8)|uint16(reportNumber),
-		uint16(d.deviceInfo.Target[1]),
+		uint16(d.deviceInfo.GetInterfaceNumber()),
 		data,
 	)
 
@@ -309,7 +335,7 @@ func (d *deviceImpl) GetReportDescriptor() (hidreport.HIDReportDescriptor, error
 		uint8(SETUP_REQUEST_TYPE_STANDARD)|uint8(SETUP_RECIPIENT_INTERFACE)|uint8(SETUP_EP_DIR_IN),
 		uint8(SETUP_REQUEST_GET_DESCRIPTOR),
 		(uint16(DESCRIPTOR_TYPE_REPORT)<<8)|uint16(0), // Descriptor Index is zero
-		uint16(d.deviceInfo.Target[1]),
+		uint16(d.deviceInfo.GetInterfaceNumber()),
 		buf,
 	)
 
@@ -333,7 +359,7 @@ func (d *deviceImpl) GetHIDDescriptor() (hid.HIDDescriptor, error) {
 		uint8(SETUP_REQUEST_TYPE_STANDARD)|uint8(SETUP_RECIPIENT_INTERFACE)|uint8(SETUP_EP_DIR_IN),
 		uint8(SETUP_REQUEST_GET_DESCRIPTOR),
 		(uint16(DESCRIPTOR_TYPE_HID)<<8)|uint16(0), // Descriptor Index is zero
-		uint16(d.deviceInfo.Target[1]),
+		uint16(d.deviceInfo.GetInterfaceNumber()),
 		data,
 	)
 
@@ -354,7 +380,7 @@ func (d *deviceImpl) GetHIDDescriptor() (hid.HIDDescriptor, error) {
 		uint8(SETUP_REQUEST_TYPE_STANDARD)|uint8(SETUP_RECIPIENT_INTERFACE)|uint8(SETUP_EP_DIR_IN),
 		uint8(SETUP_REQUEST_GET_DESCRIPTOR),
 		(uint16(DESCRIPTOR_TYPE_HID)<<8)|uint16(0), // Descriptor Index is zero
-		uint16(d.deviceInfo.Target[1]),
+		uint16(d.deviceInfo.GetInterfaceNumber()),
 		data,
 	)
 
@@ -366,4 +392,8 @@ func (d *deviceImpl) GetHIDDescriptor() (hid.HIDDescriptor, error) {
 	}
 
 	return desc, nil
+}
+
+func (d *deviceImpl) GetStringDescriptor(index int) (string, error) {
+	return d.GetStringDescriptor(index)
 }

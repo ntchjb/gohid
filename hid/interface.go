@@ -2,11 +2,7 @@ package hid
 
 import (
 	"context"
-	"strconv"
-	"strings"
-	"time"
 
-	"github.com/google/gousb"
 	"github.com/ntchjb/usbip-virtual-device/usb/protocol/hid"
 	"github.com/ntchjb/usbip-virtual-device/usb/protocol/hid/report"
 )
@@ -93,97 +89,9 @@ const (
 	DESCRIPTOR_TYPE_PHYSICAL ClassDescriptorType = 0x23
 )
 
-type DeviceEndpoint struct {
-	// Endpoint number to be used for connection
-	Number int
-	// Endpoint address described by endpoint descriptor
-	// The address is encoded as follows:
-	//
-	// Bit 0..3 -> The endpoint number,
-	// Bit 4..6 -> Reserved, reset to zero,
-	// Bit 7 -> Direction (ignored for Control endpoints):
-	// 0 - OUT endpoint,
-	// 1 - IN endpoint
-	Address uint8
-	// Endpoint direction: true -> IN, false -> OUT
-	Direction bool
-	// Maximum packet size this endpoint is capable of
-	// sending or receiving when this configuration is
-	// selected.
-	// For interrupt endpoints, this value is used to reserve the
-	// bus time in the schedule, required for the per frame data
-	// payloads. Smaller data payloads may be sent, but will
-	// terminate the transfer and thus require intervention to
-	// restart.
-	MaxPacketSize int
-	// Interval for polling endpoint for data transfers. Expressed in milliseconds.
-	PollInterval time.Duration
-	// Transfer types of given endpoint
-	TransferType EndpointTransferType
-}
-
-type DeviceInfo struct {
-	DeviceDesc gousb.DeviceDesc
-	ConfigDesc gousb.ConfigDesc
-	// Connection IDs used by this library
-	// 0: Configuration number
-	// 1: Interface number
-	// 2: Setting number
-	// 3: Setting Alternate number
-	Target [3]int
-	// HID subclass
-	Subclass SubClass
-	// HID protocol
-	Protocol HIDProtocol
-	// List of endpoints
-	Endpoints []DeviceEndpoint
-}
-
-func (d DeviceInfo) String() string {
-	var builder strings.Builder
-	builder.WriteRune('[')
-	builder.WriteString(d.DeviceDesc.Vendor.String())
-	builder.WriteRune(':')
-	builder.WriteString(d.DeviceDesc.Product.String())
-	builder.WriteString("] Conf #")
-	builder.WriteString(strconv.Itoa(d.Target[0]))
-	builder.WriteString(" Intf #")
-	builder.WriteString(strconv.Itoa(d.Target[1]))
-	builder.WriteString(" Sett #")
-	builder.WriteString(strconv.Itoa(d.Target[2]))
-	builder.WriteString(" Speed: ")
-	builder.WriteString(d.DeviceDesc.Speed.String())
-	builder.WriteString(", CtrlSize: ")
-	builder.WriteString(strconv.Itoa(d.DeviceDesc.MaxControlPacketSize))
-
-	builder.WriteString(", Ep:[")
-	for i, endpoint := range d.Endpoints {
-		if i > 0 {
-			builder.WriteString(", ")
-		}
-		builder.WriteString("#" + strconv.Itoa(endpoint.Number))
-		if endpoint.Direction {
-			builder.WriteString("(IN)")
-		} else {
-			builder.WriteString("(OUT)")
-		}
-	}
-	builder.WriteRune(']')
-
-	return builder.String()
-}
-
-type DeviceInfos []DeviceInfo
-
-func (d DeviceInfos) String() string {
-	var res string
-	for _, info := range d {
-		res += info.String() + "\n"
-	}
-	return res
-}
-
-type DeviceAccessor interface {
+type Device interface {
+	// Set profile to the device on which configuration/interface/alternateSetting to be used
+	SetTarget(confNumber, infNumber, altNumber int) error
 	// Close device connection
 	Close() error
 	// Write an Output report to HID device, via interrupt OUT endpoint
@@ -207,12 +115,10 @@ type DeviceAccessor interface {
 	GetManufacturer() (string, error)
 	// Get report descriptor using Get_Descriptor transfer, via control endpoint
 	GetReportDescriptor() (report.HIDReportDescriptor, error)
-	// Get device info
-	GetDeviceInfo() DeviceInfo
 	// Get HID descriptor using Get_Descriptor transfer, via control endpoint
 	GetHIDDescriptor() (hid.HIDDescriptor, error)
-}
-
-type DeviceOpener interface {
-	Open() (DeviceAccessor, error)
+	// Get string descriptor
+	GetStringDescriptor(index int) (string, error)
+	// Get device info
+	GetDeviceInfo() DeviceInfo
 }

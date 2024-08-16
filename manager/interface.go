@@ -1,12 +1,13 @@
 package manager
 
 import (
+	"github.com/google/gousb"
 	"github.com/ntchjb/gohid/hid"
 )
 
 type DeviceManager interface {
 	Init()
 	Close() error
-	Enumerate(vendorID uint16, productID uint16) (hid.DeviceInfos, error)
-	Open(deviceInfo hid.DeviceInfo) (hid.DeviceAccessor, error)
+	Enumerate(vendorID gousb.ID, productID gousb.ID) (hid.DeviceInfos, error)
+	Open(vendorID, productID gousb.ID) (hid.Device, error)
 }
