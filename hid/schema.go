@@ -1,12 +1,5 @@
 package hid
 
-import (
-	"context"
-
-	"github.com/ntchjb/usbip-virtual-device/usb/protocol/hid"
-	"github.com/ntchjb/usbip-virtual-device/usb/protocol/hid/report"
-)
-
 const (
 	HID_CLASS_ID        uint8  = 3
 	HID_MAX_REPORT_SIZE uint16 = 4096
@@ -88,37 +81,3 @@ const (
 	DESCRIPTOR_TYPE_REPORT   ClassDescriptorType = 0x22
 	DESCRIPTOR_TYPE_PHYSICAL ClassDescriptorType = 0x23
 )
-
-type Device interface {
-	// Set profile to the device on which configuration/interface/alternateSetting to be used
-	SetTarget(confNumber, infNumber, altNumber int) error
-	// Close device connection
-	Close() error
-	// Write an Output report to HID device, via interrupt OUT endpoint
-	WriteOutput(ctx context.Context, data []byte) (int, error)
-	// Read an Input report from a HID device, via interrupt IN endpoint
-	ReadInput(ctx context.Context, data []byte) (int, error)
-	// Send a Feature Report using Set_Report transfer, via control endpoint
-	// The first byte of data must contain the Report ID. For device that support single report type, set it to 0x00
-	SendFeatureReport(data []byte) (int, error)
-	// Get a Feature report from a HID device using Get_Report transfer, via control endpoint
-	GetFeatureReport(data []byte) (int, error)
-	// Send Output Report to HID device using Set_Report transfer, via control endpoint
-	SendOutputReport(data []byte) (int, error)
-	// Get Input report from HID device using Get_Report transfer, via control endpoint
-	GetInputReport(data []byte) (int, error)
-	// Get device serial number using Get_Descriptor transfer (indexed string), via control endpoint
-	GetSerialNumber() (string, error)
-	// Get device product name using Get_Descriptor transfer (indexed string), via control endpoint
-	GetProduct() (string, error)
-	// Get device manufacturer using Get_Descriptor transfer (indexed string), via control endpoint
-	GetManufacturer() (string, error)
-	// Get report descriptor using Get_Descriptor transfer, via control endpoint
-	GetReportDescriptor() (report.HIDReportDescriptor, error)
-	// Get HID descriptor using Get_Descriptor transfer, via control endpoint
-	GetHIDDescriptor() (hid.HIDDescriptor, error)
-	// Get string descriptor
-	GetStringDescriptor(index int) (string, error)
-	// Get device info
-	GetDeviceInfo() DeviceInfo
-}

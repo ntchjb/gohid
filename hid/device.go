@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/google/gousb"
+	"github.com/ntchjb/gohid/usb"
 	"github.com/ntchjb/usbip-virtual-device/usb/protocol/hid"
 	hidreport "github.com/ntchjb/usbip-virtual-device/usb/protocol/hid/report"
 )
@@ -18,25 +19,75 @@ var (
 	ErrDeviceIsNil           = errors.New("device is nil")
 )
 
-func NewDevice(device *gousb.Device) (Device, error) {
+const (
+	DEFAULT_ENDPOINT_STREAM_COUNT = 16
+)
+
+type DeviceConfig struct {
+	// Number of stream lanes used for streaming data on interrupt endpoints
+	StreamLaneCount int
+}
+
+type Device interface {
+	// Set profile to the device on which configuration/interface/alternateSetting to be used
+	SetTarget(confNumber, infNumber, altNumber int) error
+	// Close device connection
+	Close() error
+	// Write an Output report to HID device, via interrupt OUT endpoint
+	WriteOutput(ctx context.Context, data []byte) (int, error)
+	// Read an Input report from a HID device, via interrupt IN endpoint
+	ReadInput(ctx context.Context, data []byte) (int, error)
+	// Send a Feature Report using Set_Report transfer, via control endpoint
+	// The first byte of data must contain the Report ID. For device that support single report type, set it to 0x00
+	SendFeatureReport(data []byte) (int, error)
+	// Get a Feature report from a HID device using Get_Report transfer, via control endpoint
+	GetFeatureReport(data []byte) (int, error)
+	// Send Output Report to HID device using Set_Report transfer, via control endpoint
+	SendOutputReport(data []byte) (int, error)
+	// Get Input report from HID device using Get_Report transfer, via control endpoint
+	GetInputReport(data []byte) (int, error)
+	// Get device serial number using Get_Descriptor transfer (indexed string), via control endpoint
+	GetSerialNumber() (string, error)
+	// Get device product name using Get_Descriptor transfer (indexed string), via control endpoint
+	GetProduct() (string, error)
+	// Get device manufacturer using Get_Descriptor transfer (indexed string), via control endpoint
+	GetManufacturer() (string, error)
+	// Get report descriptor using Get_Descriptor transfer, via control endpoint
+	GetReportDescriptor() (hidreport.HIDReportDescriptor, error)
+	// Get HID descriptor using Get_Descriptor transfer, via control endpoint
+	GetHIDDescriptor() (hid.HIDDescriptor, error)
+	// Get string descriptor
+	GetStringDescriptor(index int) (string, error)
+	// Get device info
+	GetDeviceInfo() DeviceInfo
+}
+
+func NewDevice(device usb.Device, config DeviceConfig) (Device, error) {
 	if device == nil {
 		return nil, ErrDeviceIsNil
 	}
-	if err := device.SetAutoDetach(true); err != nil {
-		return nil, fmt.Errorf("unable to set auto detach for device %v:%v: %w", device.Desc.Vendor, device.Desc.Product, err)
+
+	// This is important to allow this library to attach device's interfaces.
+	// Without this call, manual detach of the device from kernel is required
+	// to successfully claim device interfaces.
+	if err, desc := device.SetAutoDetach(true), device.Descriptor(); err != nil {
+		return nil, fmt.Errorf("unable to set auto detach for device %v:%v: %w", desc.Vendor, desc.Product, err)
 	}
 
 	return &deviceImpl{
-		device: device,
+		device:  device,
+		dConfig: config,
 	}, nil
 }
 
 type deviceImpl struct {
-	device *gousb.Device
-	config *gousb.Config
-	intf   *gousb.Interface
-	epIn   *gousb.InEndpoint
-	epOut  *gousb.OutEndpoint
+	device usb.Device
+	config usb.Config
+	intf   usb.Interface
+	writer usb.StreamWriter
+	reader usb.StreamReader
+
+	dConfig DeviceConfig
 
 	deviceInfo DeviceInfo
 }
@@ -44,10 +95,12 @@ type deviceImpl struct {
 func (d *deviceImpl) SetTarget(confNumber, infNumber, altNumber int) error {
 	var err error
 	var deviceInfo DeviceInfo
-	var cfg *gousb.Config
-	var intf *gousb.Interface
-	var epIn *gousb.InEndpoint
-	var epOut *gousb.OutEndpoint
+	var cfg usb.Config
+	var intf usb.Interface
+	var epIn usb.InEndpoint
+	var epOut usb.OutEndpoint
+	var writer usb.StreamWriter
+	var reader usb.StreamReader
 
 	if d.device == nil {
 		return ErrDeviceIsNil
@@ -64,48 +117,63 @@ func (d *deviceImpl) SetTarget(confNumber, infNumber, altNumber int) error {
 			}
 		}
 	}()
-	if err := deviceInfo.FromDeviceDesc(d.device.Desc, confNumber, infNumber, altNumber); err != nil {
+
+	deviceDesc := d.device.Descriptor()
+	if err := deviceInfo.FromDeviceDesc(deviceDesc, confNumber, infNumber, altNumber); err != nil {
 		return fmt.Errorf("unable to gain device info from device: %w", err)
 	}
 
+	if d.writer != nil {
+		d.writer.Close()
+	}
+	if d.reader != nil {
+		d.reader.Close()
+	}
 	if d.intf != nil {
 		d.intf.Close()
-		d.intf = nil
 	}
 	if d.config != nil {
 		d.config.Close()
-		d.config = nil
 	}
-	d.epIn = nil
-	d.epOut = nil
 
 	cfg, err = d.device.Config(confNumber)
 	if err != nil {
-		return fmt.Errorf("unable to get config #%d for device %v:%v: %w", confNumber, d.device.Desc.Vendor, d.device.Desc.Product, err)
+		return fmt.Errorf("unable to get config #%d for device %v:%v: %w", confNumber, deviceDesc.Vendor, deviceDesc.Product, err)
 	}
 	intf, err = cfg.Interface(infNumber, altNumber)
 	if err != nil {
-		return fmt.Errorf("unable to get interface #%d:%d for config #%d of device %v:%v: %w", infNumber, altNumber, confNumber, d.device.Desc.Vendor, d.device.Desc.Product, err)
+		return fmt.Errorf("unable to get interface #%d:%d for config #%d of device %v:%v: %w", infNumber, altNumber, confNumber, deviceDesc.Vendor, deviceDesc.Product, err)
 	}
 	endpoints := deviceInfo.GetEndpoints()
 	for _, endpoint := range endpoints {
 		if endpoint.Direction == gousb.EndpointDirectionIn && epIn == nil {
 			epIn, err = intf.InEndpoint(endpoint.Number)
 			if err != nil {
-				return fmt.Errorf("unable to get IN endpoint at #%d for device %04x:%04x: %w", endpoint.Number, d.device.Desc.Vendor, d.device.Desc.Product, err)
+				return fmt.Errorf("unable to get IN endpoint at #%d for device %04x:%04x: %w", endpoint.Number, deviceDesc.Vendor, deviceDesc.Product, err)
 			}
 		} else if endpoint.Direction == gousb.EndpointDirectionOut && epOut == nil {
 			epOut, err = intf.OutEndpoint(endpoint.Number)
 			if err != nil {
-				return fmt.Errorf("unable to get OUT endpoint at #%d for device %04x:%04x: %w", endpoint.Number, d.device.Desc.Vendor, d.device.Desc.Product, err)
+				return fmt.Errorf("unable to get OUT endpoint at #%d for device %04x:%04x: %w", endpoint.Number, deviceDesc.Vendor, deviceDesc.Product, err)
 			}
+		}
+	}
+
+	reader, err = epIn.NewStream(d.dConfig.StreamLaneCount)
+	if err != nil {
+		return fmt.Errorf("unable to create stream reader for endpoint %d: %w", epIn.Descriptor().Number, err)
+	}
+	if epOut != nil {
+		writer, err = epOut.NewStream(d.dConfig.StreamLaneCount)
+		if err != nil {
+			return fmt.Errorf("unable to create stream writer for endpoint %d: %w", epOut.Descriptor().Number, err)
 		}
 	}
 
 	d.config = cfg
 	d.intf = intf
-	d.epIn = epIn
-	d.epOut = epOut
+	d.writer = writer
+	d.reader = reader
 	d.deviceInfo = deviceInfo
 
 	return nil
@@ -118,12 +186,12 @@ func (d *deviceImpl) Close() error {
 
 	if d.config != nil {
 		if err := d.config.Close(); err != nil {
-			return fmt.Errorf("unable to close selected device configuration #%d at %04x:%04x: %w", d.deviceInfo.GetConfigNumber(), d.device.Desc.Vendor, d.device.Desc.Product, err)
+			return fmt.Errorf("unable to close selected device configuration #%d at %04x:%04x: %w", d.deviceInfo.GetConfigNumber(), d.deviceInfo.DeviceDesc.Vendor, d.deviceInfo.DeviceDesc.Product, err)
 		}
 	}
 	if d.device != nil {
 		if err := d.device.Close(); err != nil {
-			return fmt.Errorf("unable to close device at %04x:%04x: %w", d.device.Desc.Vendor, d.device.Desc.Product, err)
+			return fmt.Errorf("unable to close device at %04x:%04x: %w", d.deviceInfo.DeviceDesc.Vendor, d.deviceInfo.DeviceDesc.Product, err)
 		}
 	}
 
@@ -132,7 +200,7 @@ func (d *deviceImpl) Close() error {
 
 func (d *deviceImpl) WriteOutput(ctx context.Context, data []byte) (int, error) {
 	var isSkippedReportID bool
-	if d.epOut == nil {
+	if d.writer == nil {
 		return d.SendOutputReport(data)
 	}
 	if len(data) == 0 {
@@ -145,7 +213,7 @@ func (d *deviceImpl) WriteOutput(ctx context.Context, data []byte) (int, error) 
 		isSkippedReportID = true
 	}
 
-	byteWritten, err := d.epOut.WriteContext(ctx, data)
+	byteWritten, err := d.writer.WriteContext(ctx, data)
 	if err != nil {
 		return byteWritten, fmt.Errorf("unable to write output report to interrupt OUT endpoint: %w", err)
 	}
@@ -161,10 +229,10 @@ func (d *deviceImpl) ReadInput(ctx context.Context, data []byte) (int, error) {
 	if len(data) == 0 {
 		return 0, nil
 	}
-	if d.epIn == nil {
+	if d.reader == nil {
 		return 0, ErrUninitializedEndpoint
 	}
-	byteRead, err := d.epIn.ReadContext(ctx, data)
+	byteRead, err := d.reader.ReadContext(ctx, data)
 	if err != nil {
 		return byteRead, fmt.Errorf("unable to read report from interrupt IN endpoint: %w", err)
 	}
@@ -395,5 +463,5 @@ func (d *deviceImpl) GetHIDDescriptor() (hid.HIDDescriptor, error) {
 }
 
 func (d *deviceImpl) GetStringDescriptor(index int) (string, error) {
-	return d.GetStringDescriptor(index)
+	return d.device.GetStringDescriptor(index)
 }

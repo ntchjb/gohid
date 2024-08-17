@@ -5,18 +5,23 @@ import (
 
 	"github.com/google/gousb"
 	"github.com/ntchjb/gohid/hid"
+	"github.com/ntchjb/gohid/usb"
 )
 
+type DeviceManager interface {
+	Close() error
+	Enumerate(vendorID gousb.ID, productID gousb.ID) (hid.DeviceInfos, error)
+	Open(vendorID, productID gousb.ID, config hid.DeviceConfig) (hid.Device, error)
+}
+
 type deviceManagerImpl struct {
-	goUSBCtx *gousb.Context
+	goUSBCtx usb.Context
 }
 
-func NewDeviceManager() DeviceManager {
-	return &deviceManagerImpl{}
-}
-
-func (d *deviceManagerImpl) Init() {
-	d.goUSBCtx = gousb.NewContext()
+func NewDeviceManager(ctx usb.Context) DeviceManager {
+	return &deviceManagerImpl{
+		goUSBCtx: ctx,
+	}
 }
 
 func (d *deviceManagerImpl) Close() error {
@@ -25,7 +30,7 @@ func (d *deviceManagerImpl) Close() error {
 
 func (d *deviceManagerImpl) Enumerate(vendorID gousb.ID, productID gousb.ID) (hid.DeviceInfos, error) {
 	deviceInfos := hid.DeviceInfos{}
-	_, err := d.goUSBCtx.OpenDevices(func(desc *gousb.DeviceDesc) bool {
+	if err := d.goUSBCtx.IterateDevices(func(desc *gousb.DeviceDesc) {
 		if (vendorID == 0 || vendorID == desc.Vendor) && (productID == 0 || productID == desc.Product) {
 			for _, config := range desc.Configs {
 				for _, inf := range config.Interfaces {
@@ -33,7 +38,7 @@ func (d *deviceManagerImpl) Enumerate(vendorID gousb.ID, productID gousb.ID) (hi
 						if setting.Class == gousb.ClassHID {
 							var deviceInfo hid.DeviceInfo
 							if err := deviceInfo.FromDeviceDesc(desc, config.Number, inf.Number, setting.Alternate); err != nil {
-								return false
+								return
 							}
 							deviceInfos = append(deviceInfos, deviceInfo)
 						}
@@ -41,20 +46,18 @@ func (d *deviceManagerImpl) Enumerate(vendorID gousb.ID, productID gousb.ID) (hi
 				}
 			}
 		}
-		return false
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, fmt.Errorf("unable to open USB devices with vendorID: %d, productID: %d: %w", vendorID, productID, err)
 	}
 
 	return deviceInfos, nil
 }
 
-func (d *deviceManagerImpl) Open(vendorID, productID gousb.ID) (hid.Device, error) {
-	device, err := d.goUSBCtx.OpenDeviceWithVIDPID(vendorID, productID)
+func (d *deviceManagerImpl) Open(vendorID, productID gousb.ID, config hid.DeviceConfig) (hid.Device, error) {
+	device, err := d.goUSBCtx.OpenDevice(vendorID, productID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to open device %v:%v: %w", vendorID, productID, err)
 	}
 
-	return hid.NewDevice(device)
+	return hid.NewDevice(device, config)
 }
