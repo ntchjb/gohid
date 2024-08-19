@@ -267,7 +267,6 @@ func TestDeviceManager_Open(t *testing.T) {
 				usbCtx: func(ctrl *gomock.Controller, vendorID, productID gousb.ID) (usb.Context, usb.Device) {
 					usbCtx := usb.NewMockContext(ctrl)
 					usbDevice := usb.NewMockDevice(ctrl)
-					usbDevice.EXPECT().SetAutoDetach(true).Return(nil)
 					usbCtx.EXPECT().OpenDevice(vendorID, productID).Return(usbDevice, nil)
 
 					return usbCtx, usbDevice
@@ -281,10 +280,10 @@ func TestDeviceManager_Open(t *testing.T) {
 				},
 			},
 			res: func(t *testing.T, mockDevice *usb.MockDevice) hid.Device {
-				mockDevice.EXPECT().SetAutoDetach(true).Return(nil)
+				logger := slog.Default()
 				device, err := hid.NewDevice(mockDevice, hid.DeviceConfig{
 					StreamLaneCount: hid.DEFAULT_ENDPOINT_STREAM_COUNT,
-				})
+				}, logger)
 				assert.NoError(t, err)
 
 				return device

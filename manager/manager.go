@@ -63,5 +63,5 @@ func (d *deviceManagerImpl) Open(vendorID, productID gousb.ID, config hid.Device
 		return nil, fmt.Errorf("unable to open device %v:%v: %w", vendorID, productID, err)
 	}
 
-	return hid.NewDevice(device, config)
+	return hid.NewDevice(device, config, d.logger)
 }

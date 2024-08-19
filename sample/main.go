@@ -48,6 +48,10 @@ func main() {
 		}
 	}()
 
+	if err := hidDevice.SetAutoDetach(true); err != nil {
+		logger.Error("unable to set auto detach to device", "err", err)
+		return
+	}
 	if err := hidDevice.SetTarget(1, 0, 0); err != nil {
 		logger.Error("unable to set target of hid device", "err", err)
 		return
