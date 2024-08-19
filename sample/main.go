@@ -17,7 +17,7 @@ import (
 func main() {
 	logger := slog.Default()
 	usbCtx := usb.NewGOUSBContext()
-	man := manager.NewDeviceManager(usbCtx)
+	man := manager.NewDeviceManager(usbCtx, logger)
 
 	defer func() {
 		if err := man.Close(); err != nil {

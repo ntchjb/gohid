@@ -70,7 +70,8 @@ func NewDevice(device usb.Device, config DeviceConfig) (Device, error) {
 	// This is important to allow this library to attach device's interfaces.
 	// Without this call, manual detach of the device from kernel is required
 	// to successfully claim device interfaces.
-	if err, desc := device.SetAutoDetach(true), device.Descriptor(); err != nil {
+	if err := device.SetAutoDetach(true); err != nil {
+		desc := device.Descriptor()
 		return nil, fmt.Errorf("unable to set auto detach for device %v:%v: %w", desc.Vendor, desc.Product, err)
 	}
 

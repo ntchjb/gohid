@@ -2,6 +2,7 @@ package manager
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/google/gousb"
 	"github.com/ntchjb/gohid/hid"
@@ -15,22 +16,24 @@ type DeviceManager interface {
 }
 
 type deviceManagerImpl struct {
-	goUSBCtx usb.Context
+	usbCtx usb.Context
+	logger *slog.Logger
 }
 
-func NewDeviceManager(ctx usb.Context) DeviceManager {
+func NewDeviceManager(ctx usb.Context, logger *slog.Logger) DeviceManager {
 	return &deviceManagerImpl{
-		goUSBCtx: ctx,
+		usbCtx: ctx,
+		logger: logger,
 	}
 }
 
 func (d *deviceManagerImpl) Close() error {
-	return d.goUSBCtx.Close()
+	return d.usbCtx.Close()
 }
 
 func (d *deviceManagerImpl) Enumerate(vendorID gousb.ID, productID gousb.ID) (hid.DeviceInfos, error) {
-	deviceInfos := hid.DeviceInfos{}
-	if err := d.goUSBCtx.IterateDevices(func(desc *gousb.DeviceDesc) {
+	var deviceInfos hid.DeviceInfos
+	if err := d.usbCtx.IterateDevices(func(desc *gousb.DeviceDesc) {
 		if (vendorID == 0 || vendorID == desc.Vendor) && (productID == 0 || productID == desc.Product) {
 			for _, config := range desc.Configs {
 				for _, inf := range config.Interfaces {
@@ -38,6 +41,7 @@ func (d *deviceManagerImpl) Enumerate(vendorID gousb.ID, productID gousb.ID) (hi
 						if setting.Class == gousb.ClassHID {
 							var deviceInfo hid.DeviceInfo
 							if err := deviceInfo.FromDeviceDesc(desc, config.Number, inf.Number, setting.Alternate); err != nil {
+								d.logger.Error("unable to create device info from device descriptor. Seems like device descriptor data is corrupted", "desc", desc)
 								return
 							}
 							deviceInfos = append(deviceInfos, deviceInfo)
@@ -54,7 +58,7 @@ func (d *deviceManagerImpl) Enumerate(vendorID gousb.ID, productID gousb.ID) (hi
 }
 
 func (d *deviceManagerImpl) Open(vendorID, productID gousb.ID, config hid.DeviceConfig) (hid.Device, error) {
-	device, err := d.goUSBCtx.OpenDevice(vendorID, productID)
+	device, err := d.usbCtx.OpenDevice(vendorID, productID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to open device %v:%v: %w", vendorID, productID, err)
 	}
