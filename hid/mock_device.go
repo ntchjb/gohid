@@ -234,6 +234,20 @@ func (mr *MockDeviceMockRecorder) SendOutputReport(data any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendOutputReport", reflect.TypeOf((*MockDevice)(nil).SendOutputReport), data)
 }
 
+// SetAutoDetach mocks base method.
+func (m *MockDevice) SetAutoDetach(autoDetach bool) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetAutoDetach", autoDetach)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetAutoDetach indicates an expected call of SetAutoDetach.
+func (mr *MockDeviceMockRecorder) SetAutoDetach(autoDetach any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetAutoDetach", reflect.TypeOf((*MockDevice)(nil).SetAutoDetach), autoDetach)
+}
+
 // SetTarget mocks base method.
 func (m *MockDevice) SetTarget(confNumber, infNumber, altNumber int) error {
 	m.ctrl.T.Helper()
