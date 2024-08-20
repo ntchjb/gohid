@@ -2,8 +2,13 @@ package usb
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/gousb"
+)
+
+var (
+	ErrGOUSBDeviceIsNil = errors.New("gousb device is nil")
 )
 
 type gousbStreamWriter struct {
@@ -147,8 +152,11 @@ type gousbDevice struct {
 	device *gousb.Device
 }
 
-func NewGOUSBDevice(device *gousb.Device) Device {
-	return &gousbDevice{device: device}
+func NewGOUSBDevice(device *gousb.Device) (Device, error) {
+	if device == nil {
+		return nil, ErrGOUSBDeviceIsNil
+	}
+	return &gousbDevice{device: device}, nil
 }
 
 func (g *gousbDevice) SetAutoDetach(autodetach bool) error {
@@ -219,7 +227,7 @@ func (g *gousbContext) OpenDevice(vid, pid gousb.ID) (Device, error) {
 		return nil, err
 	}
 
-	return NewGOUSBDevice(device), err
+	return NewGOUSBDevice(device)
 }
 
 func (g *gousbContext) Close() error {
